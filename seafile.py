@@ -488,7 +488,21 @@ class Seafile(object):
         if password:
             data['passwd'] = password
         repo_json = self.call_base('repos/', data=data, req_type='post').json()
-        return self.get_repo(repo_json['repo_id'])
+        return self.call_get_repo(repo_json['repo_id'])
+
+    @raise_does_not_exist('The requested library does not exist')
+    def call_get_repo(self, repo_id):
+        """Get the repo which has the id `repo_id`.
+        Raises :exc:`DoesNotExist` if no such repo exists.
+        """
+        repo_json = self.call_base('repos/' + repo_id).json()
+        return Repo.from_json(repo_json)
+
+    def call_delete_repo(self, repo):
+
+        resp = self.call_base('repos/'+repo.id+'/', req_type='delete')
+        return resp.text == "success"
+        
 
     def get_repo(self, proj_name):
         """Returns the repo object for this project, creates a new one if none exists yet.
@@ -499,6 +513,7 @@ class Seafile(object):
         all_repos = self.call_list_repos()
         r = [r for r in all_repos if r.name == proj_name]
 
+        print r
         if len(r) > 1:
             return None
         elif len(r) == 0:
