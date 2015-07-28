@@ -1,3 +1,16 @@
+"""
+
+A client script to help working with project-based files.
+
+Requirements:
+
+python:
+ - argparse
+ - requests (if you get error messages about SSL, pin to version 2.5.3: pip install requests==2.5.3)
+
+
+"""
+
 # from seafileapi import client, group
 # from seafileapi.exceptions import DoesNotExist
 import os.path
@@ -453,7 +466,6 @@ class Seafile(object):
     def call_get_file_content(self, fileObj):
         """Get the content of the file"""
         url = self.call_get_file_download_link(fileObj)
-        print url
         return self.call_base(url).content
 
 
@@ -513,7 +525,6 @@ class Seafile(object):
         all_repos = self.call_list_repos()
         r = [r for r in all_repos if r.name == proj_name]
 
-        print r
         if len(r) > 1:
             return None
         elif len(r) == 0:
@@ -545,9 +556,7 @@ class Seafile(object):
         assert path.startswith('/')
         url = 'repos/%s/dir/' % repo.id
         query = '?' + urlencode(dict(p=path))
-        print query
         resp = self.call_base(url + query)
-        print resp
         dir_id = resp.headers['oid']
         dir_json = resp.json()
         dir = SeafDir(repo, path, dir_id)
