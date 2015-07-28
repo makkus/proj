@@ -487,7 +487,7 @@ class Seafile(object):
         data = {'name': name, 'desc': desc}
         if password:
             data['passwd'] = password
-        repo_json = self.call_base('repos/', data=data).json()
+        repo_json = self.call_base('repos/', data=data, req_type='post').json()
         return self.get_repo(repo_json['repo_id'])
 
     def get_repo(self, proj_name):
