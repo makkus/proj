@@ -1,5 +1,5 @@
-from seafileapi import client, group
-from seafileapi.exceptions import DoesNotExist
+# from seafileapi import client, group
+# from seafileapi.exceptions import DoesNotExist
 import os.path
 import logging
 import sys
@@ -7,10 +7,16 @@ import requests
 import urllib
 import ConfigParser
 import socket
-import time
 import argparse
 import getpass
 from pwd import getpwnam
+import io
+import re
+import posixpath
+from urllib import urlencode
+from functools import wraps
+
+ZERO_OBJ_ID = '0000000000000000000000000000000000000000'
 
 PROJECT_GROUP_NAME = 'Projects'
 CONF_FILENAME = 'cer_project.conf'
@@ -18,9 +24,6 @@ CONF_SYS = '/etc/'+CONF_FILENAME
 CONF_HOME = os.path.expanduser('~/.'+CONF_FILENAME)
 DEFAULT_SEAFILE_URL = 'https://seafile.cer.auckland.ac.nz'
 HOSTS_SUBDIR = "/hosts"
-
-url = 'https://seafile.cer.auckland.ac.nz'
-token = 'ce60ebf97e2af4bcb2da167545aae4433b842b7f'
 
 # arg parsing ===============================================
 class CliCommands(object):
@@ -157,46 +160,202 @@ class CliCommands(object):
 
         os.chown(CONF_HOME, int(uid), -1)
 
-
     def upload(self, args):
 
         for f in args.files:
             self.seafile_client.upload_file(self.repo, '/'+self.hostname, f.name)
-        
 
-        
+class ClientHttpError(Exception):
+    """This exception is raised if the returned http response is not as
+    expected"""
+    def __init__(self, code, message):
+        super(ClientHttpError, self).__init__()
+        self.code = code
+        self.message = message
+
+    def __str__(self):
+        return 'ClientHttpError[%s: %s]' % (self.code, self.message)
+
+class OperationError(Exception):
+    """Expcetion to raise when an opeartion is failed"""
+    pass
+
+class DoesNotExist(Exception):
+    """Raised when not matching resource can be found."""
+    def __init__(self, msg):
+        super(DoesNotExist, self).__init__()
+        self.msg = msg
+
+    def __str__(self):
+        return 'DoesNotExist: %s' % self.msg
+
+def raise_does_not_exist(msg):
+    """Decorator to turn a function that get a http 404 response to a
+    :exc:`DoesNotExist` exception."""
+    def decorator(func):
+        @wraps(func)
+        def wrapped(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except ClientHttpError, e:
+                if e.code == 404:
+                    raise DoesNotExist(msg)
+                else:
+                    raise
+        return wrapped
+    return decorator
+
+class Repo(object):
+    """
+    A seafile library
+    """
+    def __init__(self, repo_id, repo_name, repo_desc,
+                 encrypted, owner, perm):
+        self.id = repo_id
+        self.name = repo_name
+        self.desc = repo_desc
+        self.encrypted = encrypted
+        self.owner = owner
+        self.perm = perm
+
+    @classmethod
+    def from_json(cls, repo_json):
+        repo_json = utf8lize(repo_json)
+
+        repo_id = repo_json['id']
+        repo_name = repo_json['name']
+        repo_desc = repo_json['desc']
+        encrypted = repo_json['encrypted']
+        perm = repo_json['permission']
+        owner = repo_json['owner']
+
+        return cls(repo_id, repo_name, repo_desc, encrypted, owner, perm)
+
+class _SeafDirentBase(object):
+    """Base class for :class:`SeafFile` and :class:`SeafDir`.
+    It provides implementation of their common operations.
+    """
+    isdir = None
+
+    def __init__(self, repo, path, object_id, size=0):
+        """
+        :param:`path` the full path of this entry within its repo, like
+        "/documents/example.md"
+        :param:`size` The size of a file. It should be zero for a dir.
+        """
+        self.repo = repo
+        self.path = path
+        self.id = object_id
+        self.size = size
+
+    @property
+    def name(self):
+        return posixpath.basename(self.path)
+
+
+class SeafDir(_SeafDirentBase):
+    isdir = True
+
+    def __init__(self, *args, **kwargs):
+        super(SeafDir, self).__init__(*args, **kwargs)
+        self.entries = None
+        self.entries = kwargs.pop('entries', None)
+
+    def ls(self, force_refresh=False):
+        """List the entries in this dir.
+        Return a list of objects of class :class:`SeafFile` or :class:`SeafDir`.
+        """
+        if self.entries is None or force_refresh:
+            self.load_entries()
+
+        return self.entries
+
+
+
+    def load_entries(self, dirents_json=None):
+        if dirents_json is None:
+            url = '/api2/repos/%s/dir/' % self.repo.id + querystr(p=self.path)
+            dirents_json = self.client.get(url).json()
+
+        self.entries = [self._load_dirent(entry_json) for entry_json in dirents_json]
+
+    def _load_dirent(self, dirent_json):
+        dirent_json = utf8lize(dirent_json)
+        path = posixpath.join(self.path, dirent_json['name'])
+        if dirent_json['type'] == 'file':
+            return SeafFile(self.repo, path, dirent_json['id'], dirent_json['size'])
+        else:
+            return SeafDir(self.repo, path, dirent_json['id'], 0)
+
+    @property
+    def num_entries(self):
+        if self.entries is None:
+            self.load_entries()
+        return len(self.entries) if self.entries is not None else 0
+    
+    def __str__(self):
+        return 'SeafDir[repo=%s,path=%s,entries=%s]' % \
+            (self.repo.id[:6], self.path, self.num_entries)
+
+    __repr__ = __str__
+
+class SeafFile(_SeafDirentBase):
+    isdir = False
+    def update(self, fileobj):
+        """Update the content of this file"""
+        pass
+
+    def __str__(self):
+        return 'SeafFile[repo=%s,path=%s,size=%s]' % \
+            (self.repo.id[:6], self.path, self.size)
+
+
+    __repr__ = __str__
+
+
+    
+class Group(object):
+    def __init__(self, group_id, group_name):
+        self.group_id = group_id
+        self.group_name = group_name
+
 class Seafile(object):
 
     def __init__(self, url, token):
         self.url = url
         self.token = token
         self.auth_headers = {'Authorization': 'token '+token}
-        self.seafile_client = client.SeafileApiClient(self.url, token=self.token)
+        # self.seafile_client = client.SeafileApiClient(self.url, token=self.token)
         self.project_group_name = PROJECT_GROUP_NAME
         self.project_group = None
-        
-
 
     def set_project_group(self):
         self.project_group = self.get_group(self.project_group_name)
-        
-    def call_base(self, path, req_type='get', data={}, req_params={}, url=None, files={}):
+
+    def call_base(self, path, req_type='get', data={}, req_params={}, files={}):
 
         method = getattr(requests, req_type)
-        if not url:
+        if not path.startswith('http'):
             url = self.url+'/api2/'+path
             if req_params:
                 parms = urllib.urlencode(req_params)
                 url = url + '?' + parms
+        else:
+            url = path
 
         logging.info('Issuing '+req_type.upper()+' request to: '+url)
         if data:
             temp = dict(data)
-            if temp['password']:
+            if temp.get('password', None):
                 temp['password'] = 'xxxxxxxxx'
             logging.info('Data: '+str(temp))
 
         resp = method(url, headers=self.auth_headers, data=data, files=files)
+        expected = (200,)
+        if resp.status_code not in expected:
+            msg = 'Expected %s, but get %s' % \
+                  (' or '.join(map(str, expected)), resp.status_code)
+            raise ClientHttpError(resp.status_code, msg)
         return resp
 
     def call_get_token(self, username, password):
@@ -208,7 +367,6 @@ class Seafile(object):
             token = response.json()['token']
         except KeyError:
             return None
-        
         return token
 
     def call_ping(self):
@@ -223,6 +381,82 @@ class Seafile(object):
         response = self.call_base('auth/ping/').text.strip("\"")
         return response == "pong"
 
+    def call_delete(self, file_obj):
+        suffix = 'dir' if file_obj.isdir else 'file'
+        url = 'repos/%s/%s/' % (self.repo.id, suffix) + querystr(p=self.path)
+        resp = self.call_base(url, req_type='delete')
+        return resp
+
+    def mkdir(self, dir_obj, name):
+        """Create a new sub folder right under this dir.
+        Return a :class:`SeafDir` object of the newly created sub folder.
+        """
+        path = posixpath.join(dir_obj.path, name)
+        url = 'repos/%s/dir/' % dir_obj.repo.id + querystr(p=path, reloaddir='true')
+        postdata = {'operation': 'mkdir'}
+        resp = self.call_base(url, data=postdata, req_type='post')
+        self.id = resp.headers['oid']
+        return SeafDir(dir_obj.repo, path, ZERO_OBJ_ID)
+
+    def upload(self, dir, fileobj, filename):
+        """Upload a file to this folder.
+        :param:dir the target folder
+        :param:fileobj :class:`File` like object
+        :param:filename The name of the file
+        Return a :class:`SeafFile` object of the newly uploaded file.
+        """
+        if isinstance(fileobj, str):
+            fileobj = io.BytesIO(fileobj)
+        upload_url = self.call_get_upload_link(dir.repo)
+        files = {
+            'file': (filename, fileobj),
+            'parent_dir': dir.path,
+        }
+        self.call_base(upload_url, files=files, req_type='post')
+        return self.call_get_file(dir.repo, posixpath.join(dir.path, filename))
+
+
+    def call_repo_getFile(self, repo, path):
+        """Get the file object located in `path` in this repo.
+        Return a :class:`SeafFile` object
+        """
+        assert path.startswith('/')
+        url = 'repos/%s/file/detail/' % repo.id
+        query = '?' + urlencode(dict(p=path))
+        file_json = self.call_base(url+query).json()
+
+        return SeafFile(repo, path, file_json['id'], file_json['size'])
+
+    def upload_local_file(self, dir, filepath, name=None):
+        """Upload a file to this folder.
+        :param:dir The target directory
+        :param:filepath The path to the local file
+        :param:name The name of this new file. If None, the name of the local file would be used.
+        Return a :class:`SeafFile` object of the newly uploaded file.
+        """
+        name = name or os.path.basename(filepath)
+        with open(filepath, 'r') as fp:
+            return self.upload(dir, fp, name)
+
+    def call_get_upload_link(self, repo):
+        
+        url = 'repos/%s/upload-link/' % repo.id
+        resp = self.call_base(url)
+        return re.match(r'"(.*)"', resp.text).group(1)
+
+    
+    def call_get_file_download_link(self, fileObj):
+        url = 'repos/%s/file/' % fileObj.repo.id + querystr(p=fileObj.path)
+        resp = self.call_base(url)
+        return re.match(r'"(.*)"', resp.text).group(1)
+
+    def call_get_file_content(self, fileObj):
+        """Get the content of the file"""
+        url = self.call_get_file_download_link(fileObj)
+        print url
+        return self.call_base(url).content
+
+
     def get_group(self, group_name):
         """Returns the group object for the group with the given name."""
 
@@ -231,9 +465,8 @@ class Seafile(object):
         if len(matches) == 0 or len(matches) > 1:
             return None
         else:
-            g = group.Group(self.seafile_client, matches[0]['id'], matches[0]['name'])
+            g = Group(matches[0]['id'], matches[0]['name'])
             return g
-
 
     def share_repo_with_group(self, repo, group, permission):
         """Share a repo with a group"""
@@ -245,25 +478,80 @@ class Seafile(object):
         }
         return self.call_base('shared-repos/'+repo.id+'/', req_params=data, req_type='put')
 
+    def call_list_repos(self):
+        repos_json = self.call_base('repos/').json()
+        return [Repo.from_json(j) for j in repos_json]
 
+    def call_create_repo(self, name, desc, password=None):
+        
+        data = {'name': name, 'desc': desc}
+        if password:
+            data['passwd'] = password
+        repo_json = self.call_base('repos/', data=data).json()
+        return self.get_repo(repo_json['repo_id'])
 
     def get_repo(self, proj_name):
-        """Returns the repo object for this project, creates a new one if none exists yet. 
+        """Returns the repo object for this project, creates a new one if none exists yet.
 
         Returns None if more than one repo exists with that name.
         """
 
-        all_repos = self.seafile_client.repos.list_repos()
+        all_repos = self.call_list_repos()
         r = [r for r in all_repos if r.name == proj_name]
 
         if len(r) > 1:
             return None
         elif len(r) == 0:
-            r = self.seafile_client.repos.create_repo(proj_name, 'Library for project: '+proj_name)
+            r = self.call_create_repo(proj_name, 'Library for project: '+proj_name)
             self.share_repo_with_group(r, self.project_group, 'rw')
             return r
         else:
             return r[0]
+
+    def create_empty_file(self, dir_obj, name):
+        """Create a new empty file in this dir.
+        Return a :class:`SeafFile` object of the newly created file.
+        """
+        # TODO: file name validation
+        path = posixpath.join(dir_obj.path, name)
+        url = 'repos/%s/file/' % self.repo.id + querystr(p=path, reloaddir='true')
+        postdata = {'operation': 'create'}
+        resp = self.call_base(url, data=postdata, req_type='post')
+        self.id = resp.headers['oid']
+        self.load_entries(resp.json())
+        return SeafFile(self.repo, path, ZERO_OBJ_ID, 0)
+
+    @raise_does_not_exist('The requested dir does not exist')
+    def call_get_dir(self, repo, path):
+        """Get the dir object located in `path` in this repo.
+        Return a :class:`SeafDir` object
+        """
+        
+        assert path.startswith('/')
+        url = 'repos/%s/dir/' % repo.id
+        query = '?' + urlencode(dict(p=path))
+        print query
+        resp = self.call_base(url + query)
+        print resp
+        dir_id = resp.headers['oid']
+        dir_json = resp.json()
+        dir = SeafDir(repo, path, dir_id)
+        dir.load_entries(dir_json)
+        return dir
+
+    @raise_does_not_exist('The requested file does not exist')
+    def call_get_file(self, repo, path):
+        """Get the file object located in `path` in this repo.
+        Return a :class:`SeafFile` object
+        """
+        
+        assert path.startswith('/')
+        url = 'repos/%s/file/detail/' % repo.id
+        query = '?' + urlencode(dict(p=path))
+        file_json = self.call_base(url+query).json()
+
+        return SeafFile(repo, path, file_json['id'], file_json['size'])
+
 
     def get_directory(self, repository, path):
         """Returns the directory object for the given path, creates it (and all it's parents) if necessary."""
@@ -272,13 +560,13 @@ class Seafile(object):
                 # otherwise 2 directories are created
                 path = path.rstrip('/')
 
-            dir = repository.get_dir(path)
+            dir = self.call_get_dir(repository, path)
         except DoesNotExist:
             parent_child = os.path.split(path)
             parent = parent_child[0]
             child = parent_child[1]
             parent_dir = self.get_directory(repository, parent)
-            return parent_dir.mkdir(child)
+            return self.mkdir(parent_dir, child)
 
         return dir
 
@@ -293,18 +581,18 @@ class Seafile(object):
 
         full_path = parent_path+file
         try:
-            repo.get_file(full_path)
+            self.call_get_file(repo, full_path)
         except DoesNotExist:
             "Uploading file..."
             path = os.path.dirname(full_path)
             dir = self.get_directory(repo, path)
-            return dir.upload_local_file(file)
+            return self.upload_local_file(dir, file)
 
         link = self.get_update_link(repo).strip('"')
         files_to_upload = {'file': open(file, 'rb'),
                            'target_file': full_path}
         # file = open(file, 'rb')
-        response = self.call_base(None, url=link, files=files_to_upload, req_type='post')
+        response = self.call_base(link, files=files_to_upload, req_type='post')
         return response
 
 # Init ======================================================
@@ -343,10 +631,31 @@ class ProjectConfig(object):
             self.token = config.get('Seafile', 'token')
         except (ConfigParser.NoSectionError, ConfigParser.NoOptionError) as e:
             self.token = None
-            
 
+# helpers
+def utf8lize(obj):
+    if isinstance(obj, dict):
+        return {k: to_utf8(v) for k, v in obj.iteritems()}
+
+    if isinstance(obj, list):
+        return [to_utf8(x) for x in obj]
+
+    if isinstance(obj, unicode):
+        return obj.encode('utf-8')
+
+    return obj
+
+def to_utf8(obj):
+    if isinstance(obj, unicode):
+        return obj.encode('utf-8')
+    return obj
+
+def querystr(**kwargs):
+    return '?' + urlencode(kwargs)
+
+
+# main entry point
 if __name__ == "__main__":
-                
     CliCommands()
 
 
