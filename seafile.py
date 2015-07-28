@@ -122,7 +122,7 @@ class CliCommands(object):
         hostname = raw_input("Hostname: ["+args.hostname+"]: ")
         
         if not hostname:
-            hostname = self.main_args.hostname
+            hostname = args.hostname
             
         cnf = ConfigParser.RawConfigParser()
         cnf.add_section('Project')
@@ -635,10 +635,16 @@ class ProjectConfig(object):
 # helpers
 def utf8lize(obj):
     if isinstance(obj, dict):
-        return {k: to_utf8(v) for k, v in obj.iteritems()}
+        temp = {}
+        for k, v in obj.iteritems():
+            temp[k] = to_utf8(v)
+        return temp
 
     if isinstance(obj, list):
-        return [to_utf8(x) for x in obj]
+        temp = []
+        for x in obj:
+            temp.append(to_utf8(x))
+        return temp
 
     if isinstance(obj, unicode):
         return obj.encode('utf-8')
