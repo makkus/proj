@@ -155,14 +155,16 @@ class CliCommands(object):
 
         with open(cnf_file, 'wb') as configfile:
             cnf.write(configfile)
+            
         # write only to home directory, since this contains login info
         cnf = ConfigParser.RawConfigParser()
-        cnf.add_section('Seafile')
-        cnf.set('Seafile', 'token', token)
         if args.system:
+            cnf.add_section('Seafile')
+            cnf.set('Seafile', 'token', token)
             with open(CONF_HOME, 'wb') as configfile:
                 cnf.write(configfile)
         else:
+            cnf.set('Seafile', 'token', token)
             with open(CONF_HOME, 'a') as configfile:
                 cnf.write(configfile)
 
