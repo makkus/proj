@@ -84,7 +84,8 @@ class CliCommands(object):
     def init(self, args):
 
         seafile_url = None
-        os.remove(CONF_HOME)
+        if os.path.isfile(CONF_HOME):
+            os.remove(CONF_HOME)
 
         while (True):
             if args.url:
