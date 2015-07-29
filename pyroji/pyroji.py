@@ -26,6 +26,7 @@ from pwd import getpwnam
 import io
 import re
 import posixpath
+import time
 from urllib import urlencode
 from functools import wraps
 
@@ -37,6 +38,7 @@ CONF_SYS = '/etc/'+CONF_FILENAME
 CONF_HOME = os.path.expanduser('~/.'+CONF_FILENAME)
 DEFAULT_SEAFILE_URL = 'https://seafile.cer.auckland.ac.nz'
 HOSTS_SUBDIR = "/hosts"
+NOTES_FILE = "/notes.md"
 
 # arg parsing ===============================================
 class CliCommands(object):
@@ -55,9 +57,14 @@ class CliCommands(object):
         init_parser.add_argument('--system', help='writes system-wide configuration instead of just for this user (to: /etc/'+CONF_FILENAME+')', action='store_true')
         init_parser.set_defaults(func=self.init, command='init')
         
-        upload_parser = subparsers.add_parser('upload', help='Upload one or multiple files into the approriate hosts subdirectory of this projects library')
-        upload_parser.add_argument('files', metavar='file', type=file, nargs='+', help='the files to upload')
-        upload_parser.set_defaults(func=self.upload, command='upload')
+        add_parser = subparsers.add_parser('add', help='Upload one or multiple files into the approriate hosts subdirectory of this projects library')
+        add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the files to upload')
+        add_parser.set_defaults(func=self.add, command='add')
+
+        add_note_parser = subparsers.add_parser('note', help='Add one or multiple notes to the project')
+        add_note_parser.add_argument('notes', metavar='notes', type=str, nargs='+', help='the note(s) to add')
+        add_note_parser.set_defaults(func=self.note, command='note')
+        
 
         self.namespace = parser.parse_args()
 
@@ -77,7 +84,6 @@ class CliCommands(object):
     def init(self, args):
 
         seafile_url = None
-        
         while (True):
             if args.url:
                 url = args.url
@@ -111,7 +117,6 @@ class CliCommands(object):
                 if not token:
                     continue
 
-
             # test connection
             sf_client = Seafile(seafile_url, token)
             response = sf_client.call_auth_ping()
@@ -122,21 +127,20 @@ class CliCommands(object):
                 continue
             else:
                 break
-            
+
         if args.project:
             project_name = args.project
         else:
             while (True):
                 project_name = raw_input("Project name: ")
                 if project_name:
-                   break
+                    break
 
-               
         hostname = raw_input("Hostname: ["+args.hostname+"]: ")
-        
+
         if not hostname:
             hostname = args.hostname
-            
+
         cnf = ConfigParser.RawConfigParser()
         cnf.add_section('Project')
         cnf.set('Project', 'name', project_name)
@@ -144,20 +148,17 @@ class CliCommands(object):
         cnf.set('Host', 'name', hostname)
         cnf.add_section('Seafile')
         cnf.set('Seafile', 'url', seafile_url)
-
         if args.system:
             cnf_file = CONF_SYS
         else:
             cnf_file = CONF_HOME
-            
+
         with open(cnf_file, 'wb') as configfile:
             cnf.write(configfile)
-
         # write only to home directory, since this contains login info
         cnf = ConfigParser.RawConfigParser()
         cnf.add_section('Seafile')
         cnf.set('Seafile', 'token', token)
-
         if args.system:
             with open(CONF_HOME, 'wb') as configfile:
                 cnf.write(configfile)
@@ -172,11 +173,19 @@ class CliCommands(object):
             uid = os.getuid()
 
         os.chown(CONF_HOME, int(uid), -1)
+        return
 
-    def upload(self, args):
+    def add(self, args):
 
         for f in args.files:
-            self.seafile_client.upload_file(self.repo, '/'+self.hostname, f.name)
+            if os.path.isdir(f):
+                self.seafile_client.upload_folder(self.repo, '/'+self.hostname, f)
+            elif os.path.isfile(f):
+                self.seafile_client.upload_file(self.repo, '/'+self.hostname, f)
+
+    def note(self, args):
+        for f in args.notes:
+            self.seafile_client.add_text(self.repo, NOTES_FILE)
 
 class ClientHttpError(Exception):
     """This exception is raised if the returned http response is not as
@@ -366,6 +375,7 @@ class Seafile(object):
         resp = method(url, headers=self.auth_headers, data=data, files=files)
         expected = (200,)
         if resp.status_code not in expected:
+            print resp.content
             msg = 'Expected %s, but get %s' % \
                   (' or '.join(map(str, expected)), resp.status_code)
             raise ClientHttpError(resp.status_code, msg)
@@ -451,6 +461,7 @@ class Seafile(object):
         with open(filepath, 'r') as fp:
             return self.upload(dir, fp, name)
 
+                
     def call_get_upload_link(self, repo):
         
         url = 'repos/%s/upload-link/' % repo.id
@@ -467,6 +478,13 @@ class Seafile(object):
         """Get the content of the file"""
         url = self.call_get_file_download_link(fileObj)
         return self.call_base(url).content
+
+
+    def add_text(self, repo, file, text):
+
+        file = self.call_get_file(repo, file)
+        content = self.call_get_file_content(file)
+        return content
 
 
     def get_group(self, group_name):
@@ -600,9 +618,29 @@ class Seafile(object):
         response = self.call_base('repos/'+repo.id+'/update-link/')
         return response.text
 
+    def upload_folder(self, repo, parent_path, folderpath, name=None):
+        """Upload a folder to this remote dir.
+        :param:dir The target directory
+        :param:folderpath The path to the local folder
+        :param:name The name of the new remote folder, if None, the name of the local folder will be used
+        """
+        name = name or os.path.basename(folderpath)
+
+        for dirName, subdirList, fileList in os.walk(folderpath):
+            print ('Found dir: %s' % dirName)
+            for fname in fileList:
+                remote = dirName+'/'+fname
+                print ('\tUploading: %s' % remote)
+                self.upload_file(repo, parent_path, remote)
+                # time.sleep(1)
+
     def upload_file(self, repo, parent_path, file):
         """Uploads or updates the file to/on the repo."""
 
+        if os.path.islink(file):
+            print file+" is link, ignoring..."
+            return None
+    
         full_path = parent_path+file
         try:
             self.call_get_file(repo, full_path)
@@ -683,10 +721,5 @@ def to_utf8(obj):
 def querystr(**kwargs):
     return '?' + urlencode(kwargs)
 
-
-# main entry point
-if __name__ == "__main__":
+def run():
     CliCommands()
-
-
-sys.exit(0)
