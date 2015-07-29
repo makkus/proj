@@ -695,7 +695,14 @@ class ProjectConfig(object):
             
         # read config file again, this time only the one in the home dir
         config = ConfigParser.SafeConfigParser()
-        read = config.read(CONF_HOME)
+        try:
+            user = os.environ['SUDO_USER']
+            conf_user = os.path.expanduser('~'+user+"/."+CONF_FILENAME)
+            candidates = [conf_user, CONF_HOME]
+        except KeyError:
+            candidates = [CONF_HOME]
+            
+        config.read(candidates)
 
         try:
             self.token = config.get('Seafile', 'token')
