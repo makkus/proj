@@ -355,7 +355,7 @@ class Seafile(object):
         self.project_group = self.get_group(self.project_group_name)
 
     def call_base(self, path, req_type='get', data={}, req_params={}, files={}):
-
+        
         method = getattr(requests, req_type)
         if not path.startswith('http'):
             url = self.url+'/api2/'+path
@@ -375,7 +375,7 @@ class Seafile(object):
         resp = method(url, headers=self.auth_headers, data=data, files=files)
         expected = (200,)
         if resp.status_code not in expected:
-            print resp.content
+            # print resp.content
             msg = 'Expected %s, but get %s' % \
                   (' or '.join(map(str, expected)), resp.status_code)
             raise ClientHttpError(resp.status_code, msg)
@@ -665,7 +665,13 @@ class ProjectConfig(object):
     def __init__(self):
         config = ConfigParser.SafeConfigParser()
 
-        candidates = [CONF_SYS, CONF_HOME]
+        try:
+            user = os.environ['SUDO_USER']
+            conf_user = os.path.expanduser('~'+user+"/."+CONF_FILENAME)
+            candidates = [CONF_SYS, conf_user, CONF_HOME]
+        except KeyError:
+            candidates = [CONF_SYS, CONF_HOME]
+            
         config.read(candidates)
         try:
             self.project_name = config.get('Project', 'name')
