@@ -678,7 +678,7 @@ class Seafile(object):
                 self.upload_file(repo, parent_path, remote)
                 # time.sleep(1)
 
-    def upload_file(self, repo, parent_path, file, remote_name=file):
+    def upload_file(self, repo, parent_path, local_file, remote_name=None):
         """Uploads or updates the file to/on the repo.
         :param:repo the repository
         :param:parent_path the parent_path where the file should be copied to
@@ -686,22 +686,25 @@ class Seafile(object):
         :param:remote_name the remote filename/path (ontop of parent_path)
         """
 
-        if os.path.islink(file):
+        remote_name = remote_name or local_file
+        if os.path.islink(local_file):
             print file+" is link, ignoring..."
             return None
 
-        full_path = os.path.join(parent_path, remote_name)
+        # full_path = os.path.join(parent_path, remote_name)
+        full_path = parent_path + remote_name
+
         try:
             self.call_get_file(repo, full_path)
         except DoesNotExist:
             # print "Uploading file..."
             path = os.path.dirname(full_path)
             dir = self.get_directory(repo, path)
-            return self.upload_local_file(dir, file, name=full_path)
+            return self.upload_local_file(dir, local_file, name=full_path)
 
         # in case of file exists already, we just update
         link = self.get_update_link(repo).strip('"')
-        files_to_upload = {'file': open(file, 'rb'),
+        files_to_upload = {'file': open(local_file, 'rb'),
                            'target_file': full_path}
         # file = open(file, 'rb')
         response = self.call_base(link, files=files_to_upload, req_type='post')
