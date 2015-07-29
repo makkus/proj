@@ -53,7 +53,7 @@ class CliCommands(object):
         parser.add_argument('--url', '-u', help='the url of the seafile server', type=str, default=self.config.seafile_url)
         parser.add_argument('--hostname', '-s', help='the hostname', default=self.config.host_name)
         subparsers = parser.add_subparsers(help='Subcommand to run')
-        init_parser = subparsers.add_parser('init', help='Initialize this host, write config to ~/.'+CONF_FILENAME)
+        init_parser = subparsers.add_parser('init', help='Initialize this host, write config to ~/.'+CONF_FILENAME +', deleting it if it already exists')
         init_parser.add_argument('--system', help='writes system-wide configuration instead of just for this user (to: /etc/'+CONF_FILENAME+')', action='store_true')
         init_parser.set_defaults(func=self.init, command='init')
         
@@ -84,6 +84,8 @@ class CliCommands(object):
     def init(self, args):
 
         seafile_url = None
+        os.remove(CONF_HOME)
+
         while (True):
             if args.url:
                 url = args.url
@@ -141,6 +143,7 @@ class CliCommands(object):
         if not hostname:
             hostname = args.hostname
 
+
         cnf = ConfigParser.RawConfigParser()
         cnf.add_section('Project')
         cnf.set('Project', 'name', project_name)
@@ -148,24 +151,21 @@ class CliCommands(object):
         cnf.set('Host', 'name', hostname)
         cnf.add_section('Seafile')
         cnf.set('Seafile', 'url', seafile_url)
-        if args.system:
-            cnf_file = CONF_SYS
-        else:
-            cnf_file = CONF_HOME
 
-        with open(cnf_file, 'wb') as configfile:
-            cnf.write(configfile)
-            
-        # write only to home directory, since this contains login info
-        cnf = ConfigParser.RawConfigParser()
-        if args.system:
-            cnf.add_section('Seafile')
+        if not args.system:
             cnf.set('Seafile', 'token', token)
             with open(CONF_HOME, 'wb') as configfile:
                 cnf.write(configfile)
+            
         else:
+            with open(CONF_SYS, 'wb') as configfile:
+                cnf.write(configfile)
+
+            # write only to home directory, since this contains login info
+            cnf = ConfigParser.RawConfigParser()
+            cnf.add_section('Seafile')
             cnf.set('Seafile', 'token', token)
-            with open(CONF_HOME, 'a') as configfile:
+            with open(CONF_HOME, 'wb') as configfile:
                 cnf.write(configfile)
 
         os.chmod(CONF_HOME, 0700)
@@ -377,7 +377,6 @@ class Seafile(object):
         resp = method(url, headers=self.auth_headers, data=data, files=files)
         expected = (200,)
         if resp.status_code not in expected:
-            # print resp.content
             msg = 'Expected %s, but get %s' % \
                   (' or '.join(map(str, expected)), resp.status_code)
             raise ClientHttpError(resp.status_code, msg)
