@@ -182,9 +182,9 @@ class CliCommands(object):
 
         for f in args.files:
             if os.path.isdir(f):
-                self.seafile_client.upload_folder(self.repo, '/'+self.hostname, f)
+                self.seafile_client.upload_folder(self.repo, '/'+self.hostname, os.path.abspath(f))
             elif os.path.isfile(f):
-                self.seafile_client.upload_file(self.repo, '/'+self.hostname, f)
+                self.seafile_client.upload_file(self.repo, '/'+self.hostname, os.path.abspath(f))
 
     def note(self, args):
         for f in args.notes:
