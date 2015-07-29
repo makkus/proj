@@ -67,8 +67,10 @@ class CliCommands(object):
         add_note_parser.add_argument('notes', metavar='notes', type=str, nargs='*', help='the note(s) to add')
         add_note_parser.set_defaults(func=self.note, command='note')
 
-        add_last_command_parser = subparsers.add_parser('last_command', help='Adds the last command of the bash history to the relevant '+COMMAND_FILE_NAME+' file.')
-        add_last_command_parser.set_defaults(func=self.last_command, command='last_command')
+        add_command_parser = subparsers.add_parser('add_command', help='Adds a command to the relevant '+COMMAND_FILE_NAME+' file.')
+        add_command_parser.add_argument('--comment', '-c', type=unicode, help='an explantaion/comment about what this command does')
+        add_command_parser.add_argument('command', type=unicode, help='the command', nargs=argparse.REMAINDER)
+        add_command_parser.set_defaults(func=self.add_command, command='add_command')
 
         self.namespace = parser.parse_args()
 
@@ -199,12 +201,16 @@ class CliCommands(object):
             for f in args.notes:
                 self.seafile_client.add_text(self.repo, NOTES_FILE, f)
 
-    def last_command(self, args):
+    def add_command(self, args):
 
-        bash_history = os.path.expanduser("~/.bash_history")
-        last_command = os.popen("tail -1 " + bash_history).readlines()[0]
+        text = ""
+        if args.comment:
+            text = text + '    # '+args.comment+'\n'
 
-        self.seafile_client.add_text(self.repo, '/'+self.hostname+'_'+COMMAND_FILE_NAME, last_command)
+        command = "    "+" ".join(args.command)
+        text = text + command
+
+        self.seafile_client.add_text(self.repo, '/'+self.hostname+'_'+COMMAND_FILE_NAME, text)
         
 class ClientHttpError(Exception):
     """This exception is raised if the returned http response is not as
