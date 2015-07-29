@@ -29,6 +29,7 @@ import posixpath
 import time
 from urllib import urlencode
 from functools import wraps
+import tempfile
 
 ZERO_OBJ_ID = '0000000000000000000000000000000000000000'
 
@@ -39,6 +40,7 @@ CONF_HOME = os.path.expanduser('~/.'+CONF_FILENAME)
 DEFAULT_SEAFILE_URL = 'https://seafile.cer.auckland.ac.nz'
 HOSTS_SUBDIR = "/hosts"
 NOTES_FILE = "/notes.md"
+COMMAND_FILE_NAME = "command.md"
 
 # arg parsing ===============================================
 class CliCommands(object):
@@ -62,9 +64,11 @@ class CliCommands(object):
         add_parser.set_defaults(func=self.add, command='add')
 
         add_note_parser = subparsers.add_parser('note', help='Add one or multiple notes to the project')
-        add_note_parser.add_argument('notes', metavar='notes', type=str, nargs='+', help='the note(s) to add')
+        add_note_parser.add_argument('notes', metavar='notes', type=str, nargs='*', help='the note(s) to add')
         add_note_parser.set_defaults(func=self.note, command='note')
-        
+
+        add_last_command_parser = subparsers.add_parser('last_command', help='Adds the last command of the bash history to the relevant '+COMMAND_FILE_NAME+' file.')
+        add_last_command_parser.set_defaults(func=self.last_command, command='last_command')
 
         self.namespace = parser.parse_args()
 
@@ -187,9 +191,21 @@ class CliCommands(object):
                 self.seafile_client.upload_file(self.repo, '/'+self.hostname, os.path.abspath(f))
 
     def note(self, args):
-        for f in args.notes:
-            self.seafile_client.add_text(self.repo, NOTES_FILE)
 
+        if not args.notes:
+            text = sys.stdin.read()
+            self.seafile_client.add_text(self.repo, NOTES_FILE, text)
+        else:
+            for f in args.notes:
+                self.seafile_client.add_text(self.repo, NOTES_FILE, f)
+
+    def last_command(self, args):
+
+        bash_history = os.path.expanduser("~/.bash_history")
+        last_command = os.popen("tail -1 " + bash_history).readlines()[0]
+
+        self.seafile_client.add_text(self.repo, '/'+self.hostname+'_'+COMMAND_FILE_NAME, last_command)
+        
 class ClientHttpError(Exception):
     """This exception is raised if the returned http response is not as
     expected"""
@@ -484,8 +500,26 @@ class Seafile(object):
 
     def add_text(self, repo, file, text):
 
-        file = self.call_get_file(repo, file)
-        content = self.call_get_file_content(file)
+        dir = ''
+        try:
+            file_obj = self.call_get_file(repo, file)
+            content = self.call_get_file_content(file_obj)
+        except DoesNotExist:
+            content = ''
+
+        dir = os.path.dirname(file)
+        if not dir:
+            dir = "/"
+        filename = os.path.basename(file)
+
+        temp = tempfile.NamedTemporaryFile()
+        try:
+            temp.write(content+'\n\n'+text)
+            temp.seek(0)
+            
+            self.upload_file(repo, dir, temp.name, remote_name=filename)
+        finally:
+            temp.close()
         return content
 
 
@@ -620,38 +654,46 @@ class Seafile(object):
         response = self.call_base('repos/'+repo.id+'/update-link/')
         return response.text
 
-    def upload_folder(self, repo, parent_path, folderpath, name=None):
+    def upload_folder(self, repo, parent_path, folderpath, remote_name=None):
         """Upload a folder to this remote dir.
-        :param:dir The target directory
+        :param:repo the repository
+        :param:parent_path the parent_path where the file should be copied to
         :param:folderpath The path to the local folder
         :param:name The name of the new remote folder, if None, the name of the local folder will be used
         """
-        name = name or os.path.basename(folderpath)
+        name = remote_name or os.path.basename(folderpath)
 
         for dirName, subdirList, fileList in os.walk(folderpath):
             print ('Found dir: %s' % dirName)
             for fname in fileList:
                 remote = dirName+'/'+fname
                 print ('\tUploading: %s' % remote)
+                # TODO support remote paths other then the mirrored local one
                 self.upload_file(repo, parent_path, remote)
                 # time.sleep(1)
 
-    def upload_file(self, repo, parent_path, file):
-        """Uploads or updates the file to/on the repo."""
+    def upload_file(self, repo, parent_path, file, remote_name=file):
+        """Uploads or updates the file to/on the repo.
+        :param:repo the repository
+        :param:parent_path the parent_path where the file should be copied to
+        :param:file the local file path
+        :param:remote_name the remote filename/path (ontop of parent_path)
+        """
 
         if os.path.islink(file):
             print file+" is link, ignoring..."
             return None
-    
-        full_path = parent_path+file
+
+        full_path = os.path.join(parent_path, remote_name)
         try:
             self.call_get_file(repo, full_path)
         except DoesNotExist:
-            "Uploading file..."
+            # print "Uploading file..."
             path = os.path.dirname(full_path)
             dir = self.get_directory(repo, path)
-            return self.upload_local_file(dir, file)
+            return self.upload_local_file(dir, file, name=full_path)
 
+        # in case of file exists already, we just update
         link = self.get_update_link(repo).strip('"')
         files_to_upload = {'file': open(file, 'rb'),
                            'target_file': full_path}
