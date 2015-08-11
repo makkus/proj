@@ -61,8 +61,12 @@ It is possible to preserve the parent folder structure of uploaded files and fol
 Add a note to the project documentation file.
 
     pyroji note "<a note>"
+	# cat the input of a file into a note
 	cat <note_file> | pyroji note
-	pyroji note  # this will prompt for input
+	# this will prompt for input
+	pyroji note
+	# this will write into a note file called 'project.md' in the root of the library
+	pyroji --folder="" note --filename "project.md" <a note>
 
 The default note file is called *'notes.md'*, and is located in the default folder that is configured for this machine (again, can be overwritten with *'--folder'* flag). To change the name, use the *'--filename'* commandline option.
 
