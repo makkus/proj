@@ -160,7 +160,7 @@ class CliCommands(object):
         cnf.add_section('Project')
         cnf.set('Project', 'name', project_name)
         cnf.add_section('Folder')
-        cnf.set('Folder', 'path', folder)
+        cnf.set('Folder', 'default', folder)
         cnf.add_section('Seafile')
         cnf.set('Seafile', 'url', seafile_url)
 
@@ -758,7 +758,7 @@ class ProjectConfig(object):
             self.project_name = None
 
         try:
-            self.folder = config.get('Folder', 'path')
+            self.folder = config.get('Folder', 'default')
         except (ConfigParser.NoSectionError, ConfigParser.NoOptionError) as e:
             self.folder = None
 
