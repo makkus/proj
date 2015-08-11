@@ -20,7 +20,9 @@ Note: if you get error messages about SSL, pin version of requests to 2.5.3: pip
 
 # Usage
 
-Create a user account on your seafile server (default: https://seafile.cer.auckland.ac.nz) and a group called 'Projects' (hardcoded for now).
+Create a user account on your seafile server (default: https://seafile.cer.auckland.ac.nz) and a group called 'Projects' if it doesn't exist yet (hardcoded for now). Become member of that group.
+
+Note: don't use the Shibboleth option to create an account, since those accounts can't use the web-API.
 
 Then, on the machine where you want to use *pyroji*, execute:
 
@@ -76,3 +78,9 @@ This is similar to the *note* command (the same defaults and options are availab
 
     pyroji add_command -c "List a directory" ls -lah
 
+# TODOs
+
+- write tests
+- add ignore option for file uploads
+- create template folders (including files) for new projects
+- enable multiple project defaults (like python environments), and create a command to easily switch between them (i.e. *pyroji project <projectname>*)
