@@ -8,6 +8,9 @@ python:
  - argparse
  - requests (if you get error messages about SSL, pin to version 2.5.3: pip install requests==2.5.3)
 
+Install from git:
+
+    pip install https://github.com/makkus/pyroji/archive/master.zip
 
 """
 
