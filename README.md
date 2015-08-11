@@ -3,6 +3,22 @@ Pyroji
 
 Pyroji is a helper script to manage files and information related to projects. Everything is stored within a folder structure and uploaded to a Seafile server (for now, other backends possible in the future).
 
+It's main purpose is to make it possible to quickly record files and comments about a project into a common space, without having to do a lot of ssh magic and such. At the moment I use Seafile (http://seafile.com) as a storage backend because it has a nice web-API, as well as functional desktop clients that enable syncing of project folders to ones' workstation.
+
+The overall workflow is like this (using a VM project as example):
+
+* Create VM
+* install pyroji
+* 'init' pyroji
+* work on setting up the VM, while doing that issue commands like
+- 'pyroji add' (to add a files or folders)
+- 'pyroji note' (to make a note regarding the setup process)
+- 'pyroji add_command' (to record a command that was used in the setup process)
+* the notes can be used to create more in-depth documentation later on, or might be sufficient for documentation purposes
+* if further work is required, the library can be synced to ones local workstation, which makes editing the *notes.md* file easier or the creation of a more in depth doc file (for example)
+* files related to a project can easily be shared with users, also Seafile can be used as an 'upload-only' space where users can upload required files related to a project.
+
+
 Pyroji uses code from python-seafile (https://github.com/haiwen/python-seafile), but for now everything is contained in one .py file, with as little as possible dependencies so deployment on weird systems might be easier.
 
 
@@ -84,3 +100,4 @@ This is similar to the *note* command (the same defaults and options are availab
 - add ignore option for file uploads
 - create template folders (including files) for new projects
 - enable multiple project defaults (like python environments), and create a command to easily switch between them (i.e. *pyroji project <projectname>*)
+- enable downloading of files
