@@ -1,3 +1,13 @@
+This project uses code from:
+
+https://github.com/haiwen/python-seafile
+
+as well as
+
+https://github.com/nvbn/thefuck
+
+The other parts are und the Apache License (version 2):
+
 
 Apache License
                            Version 2.0, January 2004

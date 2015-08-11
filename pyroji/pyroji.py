@@ -34,6 +34,12 @@ from urllib import urlencode
 from functools import wraps
 import tempfile
 
+from psutil import Process
+from collections import defaultdict
+from subprocess import Popen, PIPE
+import os
+
+
 ZERO_OBJ_ID = '0000000000000000000000000000000000000000'
 
 PROJECT_GROUP_NAME = 'Projects'
@@ -43,6 +49,9 @@ CONF_HOME = os.path.expanduser('~/.'+CONF_FILENAME)
 DEFAULT_SEAFILE_URL = 'https://seafile.cer.auckland.ac.nz'
 DEFAULT_NOTES_FILENAME = "notes.md"
 DEFAULT_COMMAND_FILENAME = "notes.md"
+MAX_HISTORY_ITEMS = 10
+
+
 
 # arg parsing ===============================================
 class CliCommands(object):
@@ -74,7 +83,8 @@ class CliCommands(object):
         add_command_parser = subparsers.add_parser('add_command', help='Adds a command to the relevant '+DEFAULT_COMMAND_FILENAME+' file.')
         add_command_parser.add_argument('--comment', '-c', type=unicode, help='an explantaion/comment about what this command does')
         add_command_parser.add_argument('--filename', '-n', type=unicode, help='remote filename of file to add this command to, default: '+DEFAULT_COMMAND_FILENAME, default=DEFAULT_COMMAND_FILENAME)
-        add_command_parser.add_argument('command', type=unicode, help='the command', nargs=argparse.REMAINDER)
+        add_command_parser.add_argument("--hist-size", "-s", type=int, help="number of history items to display, default: "+str(MAX_HISTORY_ITEMS))
+        add_command_parser.add_argument('command', type=unicode, help='the command to add, leave empty to choose an item from the shell history', nargs=argparse.REMAINDER)
         add_command_parser.set_defaults(func=self.add_command, command='add_command')
 
         self.namespace = parser.parse_args()
@@ -216,12 +226,45 @@ class CliCommands(object):
 
     def add_command(self, args):
 
+        if not args.command:
+            shell = _get_shell()
+
+            print "Select item you want to add:"
+            i= 0
+            all_commands = list(shell.get_history ())
+
+            commands = []
+            counter = 0
+            for c in all_commands[::-1]:
+                if 'pyroji' in c:
+                    continue
+
+                if c not in commands:
+                    commands.append(c)
+                    counter = counter+1
+
+                if counter >= MAX_HISTORY_ITEMS:
+                    break
+
+            i = 0
+            commands = commands[::-1]
+            for item in commands:
+                i = i + 1
+                print "(" + str(i)+") "+item
+
+            selection = raw_input("Selection ["+str(i)+"]: ")
+            if not selection:
+                selection = i
+            command = "    " + commands[int(selection)-1]
+        else:
+            command = "    " + " ".join(args.command)
+            
         filename = args.filename
         text = ""
         if args.comment:
-            text = text + '    # '+args.comment+'\n'
+            for c in args.comment.split("\n"):
+                text = text + '    # '+c+'\n'
 
-        command = "    "+" ".join(args.command)
         text = text + command
 
         self.seafile_client.add_text(self.repo, '/'+self.folder+'/'+filename, text)
@@ -265,6 +308,224 @@ def raise_does_not_exist(msg):
                     raise
         return wrapped
     return decorator
+
+
+# code from: https://github.com/nvbn/thefuck
+class Generic(object):
+
+    def get_aliases(self):
+        return {}
+
+    def _expand_aliases(self, command_script):
+        aliases = self.get_aliases()
+        binary = command_script.split(' ')[0]
+        if binary in aliases:
+            return command_script.replace(binary, aliases[binary], 1)
+        else:
+            return command_script
+
+    def from_shell(self, command_script):
+        """Prepares command before running in app."""
+        return self._expand_aliases(command_script)
+
+    def to_shell(self, command_script):
+        """Prepares command for running in shell."""
+        return command_script
+
+    def app_alias(self, fuck):
+        return "alias {0}='TF_ALIAS={0} eval $(thefuck $(fc -ln -1))'".format(fuck)
+
+    def _get_history_file_name(self):
+        return ''
+
+    def _get_history_line(self, command_script):
+        return ''
+
+    def put_to_history(self, command_script):
+        """Puts command script to shell history."""
+        history_file_name = self._get_history_file_name()
+        if os.path.isfile(history_file_name):
+            with open(history_file_name, 'a') as history:
+                history.write(self._get_history_line(command_script))
+
+    def _script_from_history(self, line):
+        """Returns prepared history line.
+        Should return a blank line if history line is corrupted or empty.
+        """
+        return ''
+
+    def get_history(self):
+        """Returns list of history entries."""
+        history_file_name = self._get_history_file_name()
+        if os.path.isfile(history_file_name):
+            with io.open(history_file_name, 'r',
+                         encoding='utf-8', errors='ignore') as history:
+                for line in history:
+                    prepared = self._script_from_history(line)\
+                                   .strip()
+                    if prepared:
+                        yield prepared
+
+    def and_(self, *commands):
+        return u' && '.join(commands)
+
+
+class Bash(Generic):
+    def app_alias(self, fuck):
+        return "TF_ALIAS={0} alias {0}='eval $(thefuck $(fc -ln -1));" \
+               " history -r'".format(fuck)
+
+    def _parse_alias(self, alias):
+        name, value = alias.replace('alias ', '', 1).split('=', 1)
+        if value[0] == value[-1] == '"' or value[0] == value[-1] == "'":
+            value = value[1:-1]
+        return name, value
+
+    def get_aliases(self):
+        proc = Popen('bash -ic alias', stdout=PIPE, stderr=DEVNULL,
+                     shell=True)
+        return dict(
+            self._parse_alias(alias)
+            for alias in proc.stdout.read().decode('utf-8').split('\n')
+            if alias and '=' in alias)
+
+    def _get_history_file_name(self):
+        return os.environ.get("HISTFILE",
+                              os.path.expanduser('~/.bash_history'))
+
+    def _get_history_line(self, command_script):
+        return u'{}\n'.format(command_script)
+
+    def _script_from_history(self, line):
+        return line
+
+
+class Zsh(Generic):
+    def app_alias(self, fuck):
+        return "TF_ALIAS={0}" \
+               " alias {0}='eval $(thefuck $(fc -ln -1 | tail -n 1));" \
+               " fc -R'".format(fuck)
+
+    def _parse_alias(self, alias):
+        name, value = alias.split('=', 1)
+        if value[0] == value[-1] == '"' or value[0] == value[-1] == "'":
+            value = value[1:-1]
+        return name, value
+
+    def get_aliases(self):
+        proc = Popen('zsh -ic alias', stdout=PIPE, stderr=DEVNULL,
+                     shell=True)
+        return dict(
+            self._parse_alias(alias)
+            for alias in proc.stdout.read().decode('utf-8').split('\n')
+            if alias and '=' in alias)
+
+    def _get_history_file_name(self):
+        return os.environ.get("HISTFILE",
+                              os.path.expanduser('~/.zsh_history'))
+
+    def _get_history_line(self, command_script):
+        return u': {}:0;{}\n'.format(int(time()), command_script)
+
+    def _script_from_history(self, line):
+        if ';' in line:
+            return line.split(';', 1)[1]
+        else:
+            return ''
+
+class Tcsh(Generic):
+    def app_alias(self, fuck):
+        return ("alias {0} 'setenv TF_ALIAS {0} && "
+                "set fucked_cmd=`history -h 2 | head -n 1` && "
+                "eval `thefuck ${{fucked_cmd}}`'").format(fuck)
+
+    def _parse_alias(self, alias):
+        name, value = alias.split("\t", 1)
+        return name, value
+
+    def get_aliases(self):
+        proc = Popen('tcsh -ic alias', stdout=PIPE, stderr=DEVNULL,
+                     shell=True)
+        return dict(
+            self._parse_alias(alias)
+            for alias in proc.stdout.read().decode('utf-8').split('\n')
+            if alias and '\t' in alias)
+
+    def _get_history_file_name(self):
+        return os.environ.get("HISTFILE",
+                              os.path.expanduser('~/.history'))
+
+    def _get_history_line(self, command_script):
+        return u'#+{}\n{}\n'.format(int(time()), command_script)
+
+class Fish(Generic):
+
+    def _get_overridden_aliases(self):
+        overridden_aliases = os.environ.get('TF_OVERRIDDEN_ALIASES', '').strip()
+        if overridden_aliases:
+            return [alias.strip() for alias in overridden_aliases.split(',')]
+        else:
+            return ['cd', 'grep', 'ls', 'man', 'open']
+
+    def app_alias(self, fuck):
+        return ("set TF_ALIAS {0}\n"
+                "function {0} -d 'Correct your previous console command'\n"
+                "    set -l exit_code $status\n"
+                "    set -l eval_script"
+                " (mktemp 2>/dev/null ; or mktemp -t 'thefuck')\n"
+                "    set -l fucked_up_commandd $history[1]\n"
+                "    thefuck $fucked_up_commandd > $eval_script\n"
+                "    . $eval_script\n"
+                "    rm $eval_script\n"
+                "    if test $exit_code -ne 0\n"
+                "        history --delete $fucked_up_commandd\n"
+                "    end\n"
+                "end").format(fuck)
+
+    def get_aliases(self):
+        overridden = self._get_overridden_aliases()
+        proc = Popen('fish -ic functions', stdout=PIPE, stderr=DEVNULL,
+                     shell=True)
+        functions = proc.stdout.read().decode('utf-8').strip().split('\n')
+        return {func: func for func in functions if func not in overridden}
+
+    def _expand_aliases(self, command_script):
+        aliases = self.get_aliases()
+        binary = command_script.split(' ')[0]
+        if binary in aliases:
+            return u'fish -ic "{}"'.format(command_script.replace('"', r'\"'))
+        else:
+            return command_script
+
+    def from_shell(self, command_script):
+        """Prepares command before running in app."""
+        return self._expand_aliases(command_script)
+
+    def _get_history_file_name(self):
+        return os.path.expanduser('~/.config/fish/fish_history')
+
+    def _get_history_line(self, command_script):
+        return u'- cmd: {}\n   when: {}\n'.format(command_script, int(time()))
+
+    def and_(self, *commands):
+        return u'; and '.join(commands)
+
+shells = defaultdict(lambda: Generic(), {
+    'bash': Bash(),
+    'fish': Fish(),
+    'zsh': Zsh(),
+    'csh': Tcsh(),
+    'tcsh': Tcsh()})
+
+def _get_shell():
+    try:
+        shell = Process(os.getpid()).parent().name()
+    except TypeError:
+        shell = Process(os.getpid()).parent.name
+    return shells[shell]
+    
+# ----------------------------------------------------------------------------------------------------
+
 
 class Repo(object):
     """

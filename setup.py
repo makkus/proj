@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='pyroji',
-      version='0.1',
+      version='0.2',
       author="Markus Binsteiner",
       author_email="makkus@gmail.com",
       install_requires=[
