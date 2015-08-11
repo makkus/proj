@@ -34,13 +34,12 @@ import tempfile
 ZERO_OBJ_ID = '0000000000000000000000000000000000000000'
 
 PROJECT_GROUP_NAME = 'Projects'
-CONF_FILENAME = 'cer_project.conf'
+CONF_FILENAME = 'pyroji.conf'
 CONF_SYS = '/etc/'+CONF_FILENAME
 CONF_HOME = os.path.expanduser('~/.'+CONF_FILENAME)
 DEFAULT_SEAFILE_URL = 'https://seafile.cer.auckland.ac.nz'
-HOSTS_SUBDIR = "/hosts"
-NOTES_FILE = "/notes.md"
-COMMAND_FILE_NAME = "command.md"
+DEFAULT_NOTES_FILENAME = "notes.md"
+DEFAULT_COMMAND_FILENAME = "notes.md"
 
 # arg parsing ===============================================
 class CliCommands(object):
@@ -53,35 +52,38 @@ class CliCommands(object):
 
         parser.add_argument('--project', '-p', help='the project name, overwrites potential config files', type=str, default=self.config.project_name)
         parser.add_argument('--url', '-u', help='the url of the seafile server', type=str, default=self.config.seafile_url)
-        parser.add_argument('--hostname', '-s', help='the hostname', default=self.config.host_name)
+        parser.add_argument('--folder', '-f', help='the root folder where files and command on this host should go', default=self.config.folder)
         subparsers = parser.add_subparsers(help='Subcommand to run')
         init_parser = subparsers.add_parser('init', help='Initialize this host, write config to ~/.'+CONF_FILENAME +', deleting it if it already exists')
         init_parser.add_argument('--system', help='writes system-wide configuration instead of just for this user (to: /etc/'+CONF_FILENAME+')', action='store_true')
         init_parser.set_defaults(func=self.init, command='init')
         
         add_parser = subparsers.add_parser('add', help='Upload one or multiple files into the approriate hosts subdirectory of this projects library')
+        add_parser.add_argument('--subfolders', '-s', action='store_true', help='Mirror folder structure (from root) for uploaded files, default: don\'t')
         add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the files to upload')
         add_parser.set_defaults(func=self.add, command='add')
 
         add_note_parser = subparsers.add_parser('note', help='Add one or multiple notes to the project')
         add_note_parser.add_argument('notes', metavar='notes', type=str, nargs='*', help='the note(s) to add')
+        add_note_parser.add_argument('--filename', '-n', type=unicode, help='remote filename of file to add this note to, default: '+DEFAULT_NOTES_FILENAME, default=DEFAULT_NOTES_FILENAME)
         add_note_parser.set_defaults(func=self.note, command='note')
 
-        add_command_parser = subparsers.add_parser('add_command', help='Adds a command to the relevant '+COMMAND_FILE_NAME+' file.')
+        add_command_parser = subparsers.add_parser('add_command', help='Adds a command to the relevant '+DEFAULT_COMMAND_FILENAME+' file.')
         add_command_parser.add_argument('--comment', '-c', type=unicode, help='an explantaion/comment about what this command does')
+        add_command_parser.add_argument('--filename', '-n', type=unicode, help='remote filename of file to add this command to, default: '+DEFAULT_COMMAND_FILENAME, default=DEFAULT_COMMAND_FILENAME)
         add_command_parser.add_argument('command', type=unicode, help='the command', nargs=argparse.REMAINDER)
         add_command_parser.set_defaults(func=self.add_command, command='add_command')
 
         self.namespace = parser.parse_args()
 
         self.project_name = self.namespace.project
-        self.hostname = self.namespace.hostname
+        self.folder = self.namespace.folder
 
         if not self.namespace.command == 'init':
             self.seafile_client = Seafile(self.namespace.url, self.config.token)
             self.seafile_client.set_project_group()
             self.repo = self.seafile_client.get_repo(self.project_name)
-            self.dir = self.seafile_client.get_directory(self.repo, '/'+self.hostname)
+            self.dir = self.seafile_client.get_directory(self.repo, '/'+self.folder)
 
         # call the command
         self.namespace.func(self.namespace)
@@ -145,17 +147,17 @@ class CliCommands(object):
                 if project_name:
                     break
 
-        hostname = raw_input("Hostname: ["+args.hostname+"]: ")
+        folder = raw_input("Default folder for uploads and notes ["+args.folder+"]: ")
 
-        if not hostname:
-            hostname = args.hostname
+        if not folder:
+            folder = args.folder
 
 
         cnf = ConfigParser.RawConfigParser()
         cnf.add_section('Project')
         cnf.set('Project', 'name', project_name)
-        cnf.add_section('Host')
-        cnf.set('Host', 'name', hostname)
+        cnf.add_section('Folder')
+        cnf.set('Folder', 'path', folder)
         cnf.add_section('Seafile')
         cnf.set('Seafile', 'url', seafile_url)
 
@@ -186,23 +188,32 @@ class CliCommands(object):
 
     def add(self, args):
 
+        subfolders = args.subfolders
+        
         for f in args.files:
+            if subfolders:
+                remote_path = os.path.abspath(f)
+            else:
+                remote_path = '/'+os.path.basename(f)
             if os.path.isdir(f):
-                self.seafile_client.upload_folder(self.repo, '/'+self.hostname, os.path.abspath(f))
+                self.seafile_client.upload_folder(self.repo, '/'+self.folder, os.path.abspath(f), remote_name=remote_path)
             elif os.path.isfile(f):
-                self.seafile_client.upload_file(self.repo, '/'+self.hostname, os.path.abspath(f))
+                self.seafile_client.upload_file(self.repo, '/'+self.folder, os.path.abspath(f), remote_name=remote_path)
 
     def note(self, args):
 
+        filename = args.filename
         if not args.notes:
+            print "Enter note text, finish with <Control-d>, cancel with <Control-c>:\n"
             text = sys.stdin.read()
-            self.seafile_client.add_text(self.repo, NOTES_FILE, text)
+            self.seafile_client.add_text(self.repo, '/'+self.folder+'/'+filename, text)
         else:
             for f in args.notes:
-                self.seafile_client.add_text(self.repo, NOTES_FILE, f)
+                self.seafile_client.add_text(self.repo, '/' + self.folder+'/'+filename, f)
 
     def add_command(self, args):
 
+        filename = args.filename
         text = ""
         if args.comment:
             text = text + '    # '+args.comment+'\n'
@@ -210,7 +221,7 @@ class CliCommands(object):
         command = "    "+" ".join(args.command)
         text = text + command
 
-        self.seafile_client.add_text(self.repo, '/'+self.hostname+'_'+COMMAND_FILE_NAME, text)
+        self.seafile_client.add_text(self.repo, '/'+self.folder+'/'+filename, text)
         
 class ClientHttpError(Exception):
     """This exception is raised if the returned http response is not as
@@ -522,7 +533,6 @@ class Seafile(object):
         try:
             temp.write(content+'\n\n'+text)
             temp.seek(0)
-            
             self.upload_file(repo, dir, temp.name, remote_name=filename)
         finally:
             temp.close()
@@ -612,7 +622,9 @@ class Seafile(object):
         """Get the dir object located in `path` in this repo.
         Return a :class:`SeafDir` object
         """
-        
+
+        if not path:
+            path = '/'
         assert path.startswith('/')
         url = 'repos/%s/dir/' % repo.id
         query = '?' + urlencode(dict(p=path))
@@ -665,17 +677,22 @@ class Seafile(object):
         :param:repo the repository
         :param:parent_path the parent_path where the file should be copied to
         :param:folderpath The path to the local folder
-        :param:name The name of the new remote folder, if None, the name of the local folder will be used
+        :param:name The name of the new (base) remote folder, if None, the name and structure of the local folder will be used
         """
-        name = remote_name or os.path.basename(folderpath)
+        # name = remote_name or os.path.basename(folderpath)
+        # print 'xxx'+name
 
         for dirName, subdirList, fileList in os.walk(folderpath):
             print ('Found dir: %s' % dirName)
             for fname in fileList:
                 remote = dirName+'/'+fname
+                if remote_name:
+                    remote_path = remote.replace(folderpath, remote_name)
+                else:
+                    remote_path = remote
                 print ('\tUploading: %s' % remote)
-                # TODO support remote paths other then the mirrored local one
-                self.upload_file(repo, parent_path, remote)
+
+                self.upload_file(repo, parent_path, remote, remote_name=remote_path)
                 # time.sleep(1)
 
     def upload_file(self, repo, parent_path, local_file, remote_name=None):
@@ -687,12 +704,18 @@ class Seafile(object):
         """
 
         remote_name = remote_name or local_file
+        if not remote_name.startswith("/"):
+            remote_name = "/"+remote_name
+            
         if os.path.islink(local_file):
             print file+" is link, ignoring..."
             return None
 
         # full_path = os.path.join(parent_path, remote_name)
-        full_path = parent_path + remote_name
+        if parent_path == '/':
+            full_path = remote_name
+        else:
+            full_path = parent_path + remote_name
 
         try:
             self.call_get_file(repo, full_path)
@@ -732,12 +755,12 @@ class ProjectConfig(object):
             self.project_name = None
 
         try:
-            self.host_name = config.get('Host', 'name')
+            self.folder = config.get('Folder', 'path')
         except (ConfigParser.NoSectionError, ConfigParser.NoOptionError) as e:
-            self.host_name = None
+            self.folder = None
 
-        if not self.host_name:
-            self.host_name = socket.gethostname()
+        if not self.folder:
+            self.folder = ""
 
         try:
             self.seafile_url = config.get('Seafile', 'url')
