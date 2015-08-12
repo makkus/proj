@@ -55,6 +55,8 @@ This will write a file '*.pyroji.conf*' into your home directory. When the first
 
 # Commands
 
+Probably a good idea to alias those in your shell rc.
+
 ## help
 
     pyroji -h

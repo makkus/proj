@@ -6,7 +6,8 @@ setup(name='pyroji',
       author_email="makkus@gmail.com",
       install_requires=[
           "argparse",
-          "requests"
+          "requests",
+          "psutil"
       ],
       packages=["pyroji"],
       entry_points={
