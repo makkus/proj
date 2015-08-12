@@ -99,7 +99,7 @@ This is similar to the *note* command (the same defaults and options are availab
 	# add a command from shell history
 	pyroji add_command -c "Some random optional comment"
 
-Note: adding a command from shell history will only work if the shell writes the history file after every command (call 'shopt -s histappend' in bash, for example)
+Note: adding a command from shell history will only work if the shell writes the history file after every command ('shopt -s histappend; PROMPT_COMMAND="history -a;$PROMPT_COMMAND"' in bash, for example). When using sudo, use it to go into a shell like so: 'sudo -E bash', or make sure to not use sudo for the pyroji command, since the history won't be populated in that case.
 
 # TODOs
 

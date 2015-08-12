@@ -660,6 +660,7 @@ class Seafile(object):
 
     def set_project_group(self):
         self.project_group = self.get_group(self.project_group_name)
+        print self.project_group
 
     def call_base(self, path, req_type='get', data={}, req_params={}, files={}):
         
@@ -814,7 +815,7 @@ class Seafile(object):
         """Returns the group object for the group with the given name."""
 
         response = self.call_base('groups/').json()['groups']
-        matches = [g for g in response if g['name'] == self.project_group_name]
+        matches = [g for g in response if g['name'] == group_name]
         if len(matches) == 0 or len(matches) > 1:
             return None
         else:
@@ -826,7 +827,7 @@ class Seafile(object):
 
         data = {
             'share_type': 'group',
-            'group_id': self.project_group.group_id,
+            'group_id': group.group_id,
             'permission': permission
         }
         return self.call_base('shared-repos/'+repo.id+'/', req_params=data, req_type='put')
@@ -870,6 +871,12 @@ class Seafile(object):
             return None
         elif len(r) == 0:
             r = self.call_create_repo(proj_name, 'Library for project: '+proj_name)
+            # create new group for this repo
+            putdata = {'group_name': proj_name}
+            self.call_base('groups/', req_type='put', data=putdata)
+            proj_group = self.get_group(proj_name)
+            self.share_repo_with_group(r, proj_group, 'rw')
+            # share with general projects group
             self.share_repo_with_group(r, self.project_group, 'rw')
             return r
         else:
