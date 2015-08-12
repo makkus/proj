@@ -84,7 +84,7 @@ class CliCommands(object):
         add_command_parser.add_argument('--comment', '-c', type=unicode, help='an explantaion/comment about what this command does')
         add_command_parser.add_argument('--filename', '-n', type=unicode, help='remote filename of file to add this command to, default: '+DEFAULT_COMMAND_FILENAME, default=DEFAULT_COMMAND_FILENAME)
         add_command_parser.add_argument("--hist-size", "-s", type=int, help="number of history items to display, default: "+str(MAX_HISTORY_ITEMS))
-        add_command_parser.add_argument('command', type=unicode, help='the command to add, leave empty to choose an item from the shell history', nargs=argparse.REMAINDER)
+        add_command_parser.add_argument('command', type=unicode, help='the command to add, leave empty to choose an item from the shell history (will only work properly with hsitappend option enabled)', nargs=argparse.REMAINDER)
         add_command_parser.set_defaults(func=self.add_command, command='add_command')
 
         self.namespace = parser.parse_args()
@@ -252,9 +252,16 @@ class CliCommands(object):
                 i = i + 1
                 print "(" + str(i)+") "+item
 
+            print
+            print "(0) Cancel"
+            print
             selection = raw_input("Selection ["+str(i)+"]: ")
             if not selection:
                 selection = i
+
+            if selection == "0":
+                sys.exit(0)
+                    
             command = "    " + commands[int(selection)-1]
         else:
             command = "    " + " ".join(args.command)

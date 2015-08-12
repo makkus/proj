@@ -92,7 +92,12 @@ The default note file is called *'notes.md'*, and is located in the default fold
 
 This is similar to the *note* command (the same defaults and options are available), but will add the text indented with 4 white spaces, so it will be displayed as code in a markdown file. To add a command before the command, use the *'--comment'* commandline option.
 
+    # add a command
     pyroji add_command -c "List a directory" ls -lah
+	# add a command from shell history
+	pyroji add_command -c "Some random optional comment"
+
+Note: adding a command from shell history will only work if the shell writes the history file after every command (call 'shopt -s histappend' in bash, for example)
 
 # TODOs
 
