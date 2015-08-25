@@ -660,7 +660,7 @@ class Seafile(object):
 
     def set_project_group(self):
         self.project_group = self.get_group(self.project_group_name)
-        print self.project_group
+        # print self.project_group
 
     def call_base(self, path, req_type='get', data={}, req_params={}, files={}):
         
