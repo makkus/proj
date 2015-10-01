@@ -465,61 +465,61 @@ class Tcsh(Generic):
     def _get_history_line(self, command_script):
         return u'#+{}\n{}\n'.format(int(time()), command_script)
 
-class Fish(Generic):
+# class Fish(Generic):
 
-    def _get_overridden_aliases(self):
-        overridden_aliases = os.environ.get('TF_OVERRIDDEN_ALIASES', '').strip()
-        if overridden_aliases:
-            return [alias.strip() for alias in overridden_aliases.split(',')]
-        else:
-            return ['cd', 'grep', 'ls', 'man', 'open']
+#     def _get_overridden_aliases(self):
+#         overridden_aliases = os.environ.get('TF_OVERRIDDEN_ALIASES', '').strip()
+#         if overridden_aliases:
+#             return [alias.strip() for alias in overridden_aliases.split(',')]
+#         else:
+#             return ['cd', 'grep', 'ls', 'man', 'open']
 
-    def app_alias(self, fuck):
-        return ("set TF_ALIAS {0}\n"
-                "function {0} -d 'Correct your previous console command'\n"
-                "    set -l exit_code $status\n"
-                "    set -l eval_script"
-                " (mktemp 2>/dev/null ; or mktemp -t 'thefuck')\n"
-                "    set -l fucked_up_commandd $history[1]\n"
-                "    thefuck $fucked_up_commandd > $eval_script\n"
-                "    . $eval_script\n"
-                "    rm $eval_script\n"
-                "    if test $exit_code -ne 0\n"
-                "        history --delete $fucked_up_commandd\n"
-                "    end\n"
-                "end").format(fuck)
+#     def app_alias(self, fuck):
+#         return ("set TF_ALIAS {0}\n"
+#                 "function {0} -d 'Correct your previous console command'\n"
+#                 "    set -l exit_code $status\n"
+#                 "    set -l eval_script"
+#                 " (mktemp 2>/dev/null ; or mktemp -t 'thefuck')\n"
+#                 "    set -l fucked_up_commandd $history[1]\n"
+#                 "    thefuck $fucked_up_commandd > $eval_script\n"
+#                 "    . $eval_script\n"
+#                 "    rm $eval_script\n"
+#                 "    if test $exit_code -ne 0\n"
+#                 "        history --delete $fucked_up_commandd\n"
+#                 "    end\n"
+#                 "end").format(fuck)
 
-    def get_aliases(self):
-        overridden = self._get_overridden_aliases()
-        proc = Popen('fish -ic functions', stdout=PIPE, stderr=DEVNULL,
-                     shell=True)
-        functions = proc.stdout.read().decode('utf-8').strip().split('\n')
-        return {func: func for func in functions if func not in overridden}
+#     def get_aliases(self):
+#         overridden = self._get_overridden_aliases()
+#         proc = Popen('fish -ic functions', stdout=PIPE, stderr=DEVNULL,
+#                      shell=True)
+#         functions = proc.stdout.read().decode('utf-8').strip().split('\n')
+#         return {func: func for func in functions if func not in overridden}
 
-    def _expand_aliases(self, command_script):
-        aliases = self.get_aliases()
-        binary = command_script.split(' ')[0]
-        if binary in aliases:
-            return u'fish -ic "{}"'.format(command_script.replace('"', r'\"'))
-        else:
-            return command_script
+#     def _expand_aliases(self, command_script):
+#         aliases = self.get_aliases()
+#         binary = command_script.split(' ')[0]
+#         if binary in aliases:
+#             return u'fish -ic "{}"'.format(command_script.replace('"', r'\"'))
+#         else:
+#             return command_script
 
-    def from_shell(self, command_script):
-        """Prepares command before running in app."""
-        return self._expand_aliases(command_script)
+#     def from_shell(self, command_script):
+#         """Prepares command before running in app."""
+#         return self._expand_aliases(command_script)
 
-    def _get_history_file_name(self):
-        return os.path.expanduser('~/.config/fish/fish_history')
+#     def _get_history_file_name(self):
+#         return os.path.expanduser('~/.config/fish/fish_history')
 
-    def _get_history_line(self, command_script):
-        return u'- cmd: {}\n   when: {}\n'.format(command_script, int(time()))
+#     def _get_history_line(self, command_script):
+#         return u'- cmd: {}\n   when: {}\n'.format(command_script, int(time()))
 
-    def and_(self, *commands):
-        return u'; and '.join(commands)
+#     def and_(self, *commands):
+#         return u'; and '.join(commands)
 
 shells = defaultdict(lambda: Generic(), {
     'bash': Bash(),
-    'fish': Fish(),
+    # 'fish': Fish(),
     'zsh': Zsh(),
     'csh': Tcsh(),
     'tcsh': Tcsh()})
