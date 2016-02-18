@@ -33,11 +33,14 @@ import time
 from urllib import urlencode
 from functools import wraps
 import tempfile
+import subprocess
 
 from psutil import Process
 from collections import defaultdict
 from subprocess import Popen, PIPE
 import os
+
+from tabulate import tabulate
 
 
 ZERO_OBJ_ID = '0000000000000000000000000000000000000000'
@@ -51,6 +54,15 @@ DEFAULT_NOTES_FILENAME = "notes.md"
 DEFAULT_COMMAND_FILENAME = "notes.md"
 MAX_HISTORY_ITEMS = 10
 
+# helpers ===============================================
+def sizeof_fmt(num, suffix='B'):
+    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+        if abs(num) < 1024.0:
+            return (num, "%s%s" % (unit, suffix))
+            # return "%3.1f%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return (num, "%s%s" % ('Yi', suffix))
+    # return "%.1f%s%s" % (num, 'Yi', suffix)
 
 
 # arg parsing ===============================================
@@ -62,18 +74,13 @@ class CliCommands(object):
         parser = argparse.ArgumentParser(
             description='Helper utility for project related tasks')
 
-        parser.add_argument('--project', '-p', help='the project name, overwrites potential config files', type=str, default=self.config.project_name)
+        parser.add_argument('--project', '-p', help='the project name, overrides potential config files', type=str, default=self.config.project_name)
         parser.add_argument('--url', '-u', help='the url of the seafile server', type=str, default=self.config.seafile_url)
-        parser.add_argument('--folder', '-f', help='the root folder where files and command on this host should go', default=self.config.folder)
+        parser.add_argument('--folder', '-f', help='the root folder where files on this host should go', default=self.config.folder)
         subparsers = parser.add_subparsers(help='Subcommand to run')
         init_parser = subparsers.add_parser('init', help='Initialize this host, write config to ~/.'+CONF_FILENAME +', deleting it if it already exists')
         init_parser.add_argument('--system', help='writes system-wide configuration instead of just for this user (to: /etc/'+CONF_FILENAME+')', action='store_true')
         init_parser.set_defaults(func=self.init, command='init')
-        
-        add_parser = subparsers.add_parser('add', help='Upload one or multiple files into the approriate hosts subdirectory of this projects library')
-        add_parser.add_argument('--subfolders', '-s', action='store_true', help='Mirror folder structure (from root) for uploaded files, default: don\'t')
-        add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the files to upload')
-        add_parser.set_defaults(func=self.add, command='add')
 
         add_note_parser = subparsers.add_parser('note', help='Add one or multiple notes to the project')
         add_note_parser.add_argument('notes', metavar='notes', type=str, nargs='*', help='the note(s) to add')
@@ -86,6 +93,33 @@ class CliCommands(object):
         add_command_parser.add_argument("--hist-size", "-s", type=int, help="number of history items to display, default: "+str(MAX_HISTORY_ITEMS))
         add_command_parser.add_argument('command', type=unicode, help='the command to add, leave empty to choose an item from the shell history (will only work properly with hsitappend option enabled)', nargs=argparse.REMAINDER)
         add_command_parser.set_defaults(func=self.add_command, command='add_command')
+
+        add_parser = subparsers.add_parser('ls', help='Lists a directory, or displays the properties of a file.')
+        add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the path(s)')
+        add_parser.set_defaults(func=self.ls, command='ls')
+
+        add_parser = subparsers.add_parser('find', help='Finds all files under a folder, including subfolders.')
+        add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the path(s)')
+        add_parser.set_defaults(func=self.find, command='find')
+
+        add_parser = subparsers.add_parser('download', help='Download one or multiple files')
+        add_parser.add_argument('--target', '-t', help='Target folder')
+        add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the files to read')
+        add_parser.set_defaults(func=self.download, command='download')
+
+
+        add_parser = subparsers.add_parser('upload', help='Upload one or multiple files into the approriate hosts subdirectory of this projects library')
+        add_parser.add_argument('--subfolders', '-s', action='store_true', help='Mirror folder structure (from root) for uploaded files, default: don\'t')
+        add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the files to read')
+        add_parser.set_defaults(func=self.upload, command='upload')
+
+        add_parser = subparsers.add_parser('read', help='Prints out the content of a remotely stored file.')
+        add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the files to upload')
+        add_parser.set_defaults(func=self.read, command='read')
+
+        add_parser = subparsers.add_parser('edit', help='Edit the content of a remotely stored (text) file.')
+        add_parser.add_argument('file', metavar='file', type=unicode, nargs=1, help='the file to edit')
+        add_parser.set_defaults(func=self.edit, command='edit')
 
         self.namespace = parser.parse_args()
 
@@ -199,7 +233,7 @@ class CliCommands(object):
         os.chown(CONF_HOME, int(uid), -1)
         return
 
-    def add(self, args):
+    def upload(self, args):
 
         subfolders = args.subfolders
         
@@ -213,16 +247,134 @@ class CliCommands(object):
             elif os.path.isfile(f):
                 self.seafile_client.upload_file(self.repo, '/'+self.folder, os.path.abspath(f), remote_name=remote_path)
 
+    def ls(self, args):
+
+        single = len(args.files) == 1
+        for dir in args.files:
+            if not dir.startswith('/'):
+                dir = '/'+dir
+
+            is_file = self.seafile_client.call_is_file(self.repo, dir)
+
+            if is_file:
+                f = self.seafile_client.call_repo_getFile(self.repo, dir)
+                output = "- {}{} {}".format(sizeof_fmt(f.size)[0], sizeof_fmt(f.size)[1], f.name)
+
+            else:
+                d = self.seafile_client.get_directory(self.repo, dir)
+                d2 =d.ls()
+                table = []
+                for f in d2:
+                    table.append(['d' if f.isdir else '-', None if f.isdir else sizeof_fmt(f.size)[0], None if f.isdir else sizeof_fmt(f.size)[1], f.name])
+
+                output = tabulate(table, tablefmt='plain', numalign='right', stralign='left', floatfmt=".0f")
+
+            if not single:
+                print dir
+
+            print output
+
+            if not single:
+                print
+
+
+    def find(self, args):
+
+        single = len(args.files) == 1
+        for f in args.files:
+            files = []
+            if not f.startswith('/'):
+                f= '/'+f
+
+            is_file = self.seafile_client.call_is_file(self.repo, f)
+            if is_file:
+                f = self.seafile_client.call_repo_getFile(self.repo, f)
+                files.append(f)
+
+            else:
+                d = self.seafile_client.get_all_files_in_directory(self.repo, f)
+                files.extend(d)
+
+            if not single:
+                print f
+
+            table = []
+            for file in sorted(files, key=lambda file: file.path):
+                table.append(['-', sizeof_fmt(file.size)[0], sizeof_fmt(file.size)[1], file.path])
+            print tabulate(table, tablefmt='plain', numalign='right', stralign='left', floatfmt=".0f")
+
+            if not single:
+                print
+
+    def download(self, args):
+
+
+        for f in args.files:
+            if not f.startswith('/'):
+                f = '/'+f
+
+            is_file = self.seafile_client.call_is_file(self.repo, f)
+            if is_file:
+                print "Downloading file {}".format(f)
+                f = self.seafile_client.download_file(self.repo, f, target_dir=args.target)
+            else:
+                print "Downloading file {}".format(f)
+                f = self.seafile_client.download_folder(self.repo, f, target_dir=args.target, zip=args.zip)
+
+    def read(self, args):
+
+        single = len(args.files) == 1
+        for f in args.files:
+            if not f.startswith('/'):
+                f = '/'+f
+
+            content = self.seafile_client.get_file_content(self.repo, f)
+
+            if not single:
+                print '- Begin: {} ----------------------------------------'.format(f)
+
+            print content
+
+            if not single:
+                print '- End: {} ----------------------------------------'.format(f)
+                print
+
+    def edit(self, args):
+
+        path = args.file[0]
+        if not path.startswith('/'):
+            path = '/'+path
+
+        content = self.seafile_client.get_file_content(self.repo, path)
+        print content
+        fd, fname = tempfile.mkstemp()
+        print type(fd)
+        print fname
+        try:
+            with os.fdopen(fd, 'w') as tmp:
+                tmp.write(content)
+        
+            cmd = os.environ.get('EDITOR', 'vi') + ' ' + fname
+            subprocess.call(cmd, shell=True)
+
+            self.seafile_client.upload_file(self.repo, '/', fname, remote_name=path)
+        finally:
+            os.remove(fname)
+
+
     def note(self, args):
 
         filename = args.filename
+        if not filename.startswith('/'):
+            filename = '/'+filename
+
         if not args.notes:
             print "Enter note text, finish with <Control-d>, cancel with <Control-c>:\n"
             text = sys.stdin.read()
-            self.seafile_client.add_text(self.repo, '/'+self.folder+'/'+filename, text)
+            self.seafile_client.add_text(self.repo, filename, text)
         else:
             for f in args.notes:
-                self.seafile_client.add_text(self.repo, '/' + self.folder+'/'+filename, f)
+                self.seafile_client.add_text(self.repo, filename, f)
 
     def add_command(self, args):
 
@@ -261,12 +413,16 @@ class CliCommands(object):
 
             if selection == "0":
                 sys.exit(0)
-                    
+
             command = "    " + commands[int(selection)-1]
         else:
             command = "    " + " ".join(args.command)
-            
+
         filename = args.filename
+        filename = args.filename
+        if not filename.startswith('/'):
+            filename = '/'+filename
+
         text = ""
         if args.comment:
             for c in args.comment.split("\n"):
@@ -274,8 +430,8 @@ class CliCommands(object):
 
         text = text + command
 
-        self.seafile_client.add_text(self.repo, '/'+self.folder+'/'+filename, text)
-        
+        self.seafile_client.add_text(self.repo, filename, text)
+
 class ClientHttpError(Exception):
     """This exception is raised if the returned http response is not as
     expected"""
@@ -662,7 +818,7 @@ class Seafile(object):
         self.project_group = self.get_group(self.project_group_name)
         # print self.project_group
 
-    def call_base(self, path, req_type='get', data={}, req_params={}, files={}):
+    def call_base(self, path, req_type='get', data={}, req_params={}, files={}, stream=False):
         
         method = getattr(requests, req_type)
         if not path.startswith('http'):
@@ -680,7 +836,7 @@ class Seafile(object):
                 temp['password'] = 'xxxxxxxxx'
             logging.info('Data: '+str(temp))
 
-        resp = method(url, headers=self.auth_headers, data=data, files=files)
+        resp = method(url, headers=self.auth_headers, data=data, files=files, stream=stream)
         expected = (200,)
         if resp.status_code not in expected:
             msg = 'Expected %s, but get %s' % \
@@ -750,7 +906,9 @@ class Seafile(object):
         """Get the file object located in `path` in this repo.
         Return a :class:`SeafFile` object
         """
-        assert path.startswith('/')
+        if not path.startswith('/'):
+            path = '/'+path
+
         url = 'repos/%s/file/detail/' % repo.id
         query = '?' + urlencode(dict(p=path))
         file_json = self.call_base(url+query).json()
@@ -768,14 +926,12 @@ class Seafile(object):
         with open(filepath, 'r') as fp:
             return self.upload(dir, fp, name)
 
-                
     def call_get_upload_link(self, repo):
-        
+
         url = 'repos/%s/upload-link/' % repo.id
         resp = self.call_base(url)
         return re.match(r'"(.*)"', resp.text).group(1)
 
-    
     def call_get_file_download_link(self, fileObj):
         url = 'repos/%s/file/' % fileObj.repo.id + querystr(p=fileObj.path)
         resp = self.call_base(url)
@@ -785,6 +941,79 @@ class Seafile(object):
         """Get the content of the file"""
         url = self.call_get_file_download_link(fileObj)
         return self.call_base(url).content
+
+    def download_folder(self, repo, dir, target_dir=None, zip=False):
+        """Downloads a folder."""
+
+        if not dir.startswith('/'):
+            dir = '/'+dir
+
+        if target_dir:
+            try:
+                os.makedirs(target_dir)
+            except:
+                pass
+            target = os.path.join(target_dir, file_obj.name)
+        else:
+            target_dir = os.getcwd()
+
+        if not zip:
+            files = self.get_all_files_in_directory(repo, dir)
+            for f in files:
+                print f.path
+                if dir.endswith('/'):
+                    target = f.path[len(dir):]
+                else:
+                    target = f.path[len(dir)+1:]
+                    dir_name = dir.split('/')[-1]
+                    target = os.path.join(dir_name, target)
+
+                target_file = os.path.join(target_dir, target)
+                self.download_file(repo, f.path, target_file)
+
+
+    def download_file(self, repo, file, target_file=None):
+        """Downloads a file."""
+        if not file.startswith('/'):
+            file = '/'+file
+        file_obj = self.call_get_file(repo, file)
+        url = self.call_get_file_download_link(file_obj)
+
+        if target_file:
+            parent = os.path.dirname(target_file)
+            if not os.path.exists(parent):
+                try:
+                    os.makedirs(parent)
+                except:
+                    pass
+        else:
+            target_dir = os.getcwd()
+            target = file_obj.name
+            target_file = os.path.join(target_dir, target)
+
+        with open(target_file, 'wb') as handle:
+
+            response = self.call_base(url, stream=True)
+            if not response.ok:
+                raise Error("Could not download file")
+
+            for block in response.iter_content(1024):
+                handle.write(block)
+
+        return target_file
+
+
+
+    def get_file_content(self, repo, file):
+
+        dir = ''
+        try:
+            file_obj = self.call_get_file(repo, file)
+            content = self.call_get_file_content(file_obj)
+        except DoesNotExist:
+            content = ''
+
+        return content
 
 
     def add_text(self, repo, file, text):
@@ -918,13 +1147,28 @@ class Seafile(object):
         """Get the file object located in `path` in this repo.
         Return a :class:`SeafFile` object
         """
-        
+
         assert path.startswith('/')
         url = 'repos/%s/file/detail/' % repo.id
         query = '?' + urlencode(dict(p=path))
         file_json = self.call_base(url+query).json()
 
         return SeafFile(repo, path, file_json['id'], file_json['size'])
+
+    def call_is_file(self, repo, path):
+        """Checks whether the file exists and is a file, not a directory.
+        Return a boolean, True if file, False if directory or it doesn't exist."""
+
+        if not path.startswith('/'):
+            path = '/'+path
+
+        url = 'repos/%s/file/detail/' % repo.id
+        query = '?' + urlencode(dict(p=path))
+        try:
+            file_json = self.call_base(url+query).json()
+            return True
+        except:
+            return False
 
 
     def get_directory(self, repository, path):
@@ -943,6 +1187,27 @@ class Seafile(object):
             return self.mkdir(parent_dir, child)
 
         return dir
+
+    def get_all_files_in_directory(self, repository, path):
+        """Returns all files that live under a folder and it's subfolder."""
+
+        childs = []
+        self._get_all_files_in_directory(repository, path, childs)
+        return childs
+
+    def _get_all_files_in_directory(self, repository, path, childs=[]):
+        """Returns all files that live under a folder and it's subfolder."""
+
+        root = self.get_directory(repository, path)
+        for child in root.ls():
+            if child.isdir:
+                temp = self._get_all_files_in_directory(repository, child.path, childs)
+                if temp:
+                    childs.append(temp)
+            else:
+                childs.append(child)
+
+        return
 
     def get_update_link(self, repo):
         """Get the link to update a file on the repo."""
@@ -986,7 +1251,7 @@ class Seafile(object):
             remote_name = "/"+remote_name
             
         if os.path.islink(local_file):
-            print file+" is link, ignoring..."
+            print "{} is link, ignoring...".format(local_file)
             return None
 
         # full_path = os.path.join(parent_path, remote_name)

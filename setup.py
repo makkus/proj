@@ -7,7 +7,8 @@ setup(name='pyroji',
       install_requires=[
           "argparse",
           "requests",
-          "psutil"
+          "psutil",
+          "tabulate"
       ],
       packages=["pyroji"],
       entry_points={
