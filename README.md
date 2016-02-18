@@ -11,7 +11,7 @@ The overall workflow is like this (using a VM project as example):
 * install pyroji
 * 'init' pyroji
 * work on setting up the VM, while doing that issue commands like
-- 'pyroji add' (to add a files or folders)
+- 'pyroji upload (to add a files or folders)
 - 'pyroji note' (to make a note regarding the setup process)
 - 'pyroji add_command' (to record a command that was used in the setup process)
 * the notes can be used to create more in-depth documentation later on, or might be sufficient for documentation purposes
@@ -51,7 +51,7 @@ Then, on the machine where you want to use *pyroji*, execute:
 	Default folder for uploads and notes []: <leave blank for root folder, or maybe hostname or other identifier>
 
 
-This will write a file '*.pyroji.conf*' into your home directory. When the first command is called now, a library will be created on the remote server (if it doesn't exist yet), with the name of the project. When uploading a file, or adding a note into a subfolder (or the default folder), those will be created automatically.
+This will write a file '*.pyroji.conf*' into your home directory. When the first command is called now, a library will be created on the remote server (if it doesn't exist yet), with the name of the project. When uploading a file, those will be created automatically.
 
 # Commands
 
@@ -67,13 +67,13 @@ Init a machine with default credentials and folders
 
 	pyroji init
 
-## add
+## upload
 
 Add or update a local file or folder to the remote library.
 
-    pyroji add
+    pyroji upload
 
-By default, the path configured in *'~/.pyroji.conf'* is used as the remote root for the upload(s), this can be overwritten with the '*--folder*' flag (must be specified before the '*add*' command). For projects with several hosts, it makes sense to have one folder per host.
+By default, the path configured in *'~/.pyroji.conf'* is used as the remote root for the upload(s), this can be overwritten with the '*--folder*' flag (must be specified before the '*upload*' command). For projects with several hosts, it makes sense to have one folder per host.
 It is possible to preserve the parent folder structure of uploaded files and folders with the '*--subfolders*' flag (specified after the '*add*' command).
 
 ## note
@@ -100,6 +100,31 @@ This is similar to the *note* command (the same defaults and options are availab
 	pyroji add_command -c "Some random optional comment"
 
 Note: adding a command from shell history will only work if the shell writes the history file after every command ('shopt -s histappend; PROMPT_COMMAND="history -a;$PROMPT_COMMAND"' in bash, for example). When using sudo, use it to go into a shell like so: 'sudo -E bash', or make sure to not use sudo for the pyroji command, since the history won't be populated in that case.
+
+## ls
+
+TODO
+
+## find
+
+TODO
+
+## download
+
+TODO
+
+## upload
+
+TODO
+
+## read
+
+TODO
+
+## edit
+
+TODO
+
 
 # TODOs
 

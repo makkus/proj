@@ -195,7 +195,7 @@ class CliCommands(object):
                 if project_name:
                     break
 
-        folder = raw_input("Default folder for uploads and notes ["+args.folder+"]: ")
+        folder = raw_input("Default folder for uploads:["+args.folder+"]: ")
 
         if not folder:
             folder = args.folder
