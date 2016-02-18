@@ -95,7 +95,7 @@ class CliCommands(object):
         add_command_parser.set_defaults(func=self.add_command, command='add_command')
 
         add_parser = subparsers.add_parser('ls', help='Lists a directory, or displays the properties of a file.')
-        add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the path(s)')
+        add_parser.add_argument('files', metavar='file', type=unicode, nargs='*', help='the path(s)')
         add_parser.set_defaults(func=self.ls, command='ls')
 
         add_parser = subparsers.add_parser('find', help='Finds all files under a folder, including subfolders.')
@@ -104,6 +104,7 @@ class CliCommands(object):
 
         add_parser = subparsers.add_parser('download', help='Download one or multiple files')
         add_parser.add_argument('--target', '-t', help='Target folder')
+        add_parser.add_argument('--zip', '-z', action='store_true', help='Whether to zip up the folder for download.')
         add_parser.add_argument('files', metavar='file', type=unicode, nargs='+', help='the files to read')
         add_parser.set_defaults(func=self.download, command='download')
 
@@ -248,6 +249,9 @@ class CliCommands(object):
                 self.seafile_client.upload_file(self.repo, '/'+self.folder, os.path.abspath(f), remote_name=remote_path)
 
     def ls(self, args):
+
+        if len(args.files) == 0:
+            args.files = ['/']
 
         single = len(args.files) == 1
         for dir in args.files:
@@ -937,6 +941,11 @@ class Seafile(object):
         resp = self.call_base(url)
         return re.match(r'"(.*)"', resp.text).group(1)
 
+    def call_get_folder_download_link(self, fileObj):
+        url = 'repos/%s/dir/download/' % fileObj.repo.id + querystr(p=fileObj.path)
+        resp = self.call_base(url)
+        return re.match(r'"(.*)"', resp.text).group(1)
+
     def call_get_file_content(self, fileObj):
         """Get the content of the file"""
         url = self.call_get_file_download_link(fileObj)
@@ -954,11 +963,13 @@ class Seafile(object):
             except:
                 pass
             target = os.path.join(target_dir, file_obj.name)
+                
         else:
             target_dir = os.getcwd()
 
         if not zip:
             files = self.get_all_files_in_directory(repo, dir)
+            result = []
             for f in files:
                 print f.path
                 if dir.endswith('/'):
@@ -969,8 +980,45 @@ class Seafile(object):
                     target = os.path.join(dir_name, target)
 
                 target_file = os.path.join(target_dir, target)
-                self.download_file(repo, f.path, target_file)
+                result.append(self.download_file(repo, f.path, target_file))
+            return result
+        else:
+            target_name = dir.split('/')[-1]
+            target_file = os.path.join(target_dir, target_name+".zip")
+            result = self.download_zipped_folder(repo, dir, target_file)
+            return result
 
+    def download_zipped_folder(self, repo, dir, target_file=None):
+        """Downloads a zipped folder."""
+
+        if not dir.startswith('/'):
+            dir = '/'+dir
+
+        file_obj = self.call_get_dir(repo, dir)
+        url = self.call_get_folder_download_link(file_obj)
+
+        if target_file:
+            parent = os.path.dirname(target_file)
+            if not os.path.exists(parent):
+                try:
+                    os.makedirs(parent)
+                except:
+                    pass
+        else:
+            target_dir = os.getcwd()
+            target = file_obj.name
+            target_file = os.path.join(target_dir, target+".zip")
+
+        with open(target_file, 'wb') as handle:
+
+            response = self.call_base(url, stream=True)
+            if not response.ok:
+                raise Error("Could not download file")
+
+            for block in response.iter_content(1024):
+                handle.write(block)
+
+        return target_file
 
     def download_file(self, repo, file, target_file=None):
         """Downloads a file."""
